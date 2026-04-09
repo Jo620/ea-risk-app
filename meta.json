@@ -1,0 +1,29 @@
+{
+  "features": [
+    "ALB",
+    "Hb",
+    "Analgesics before the end of the surgery",
+    "Age",
+    "Duration of anesthesia",
+    "Weight",
+    "Education Degree",
+    "Dexmedetomidine",
+    "Ultrasound-guided nerve block",
+    "ASA class1f1cat1on",
+    "Hypertension",
+    "Type of surgery",
+    "PLT",
+    "Blood calcium"
+  ],
+  "target": "EA",
+  "seed_dv": 1189,
+  "seed_tt": 2297,
+  "model_paths": {
+    "CatBoost": "outputs/saved_models/CatBoost.pkl",
+    "RF": "outputs/saved_models/RF.pkl",
+    "SVM": "outputs/saved_models/SVM.pkl",
+    "DT": "outputs/saved_models/DT.pkl",
+    "XGB": "outputs/saved_models/XGB.pkl",
+    "NB": "outputs/saved_models/NB.pkl"
+  }
+}
