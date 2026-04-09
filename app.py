@@ -336,7 +336,7 @@ try:
         ax2.legend(handles=[
             mpatches.Patch(facecolor="#22c55e",alpha=.88,label="Decrease Risk"),
             mpatches.Patch(facecolor="#ef4444",alpha=.88,label="Increase Risk"),
-        ], fontsize=8, frameon=False, loc="lower right")
+        ], fontsize=8, frameon=False, loc="upper left")
 
         plt.tight_layout(pad=1.4)
         st.pyplot(fig2, use_container_width=True)
