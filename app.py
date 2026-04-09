@@ -88,8 +88,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 @st.cache_resource
 def load_model_and_meta():
-    meta_path  = os.path.join(BASE_DIR, "D:\data\Cat\meta.json")
-    model_path = os.path.join(BASE_DIR, "D:\data\Cat\CatBoost.pkl")
+    meta_path  = os.path.join(BASE_DIR, "meta.json")
+    model_path = os.path.join(BASE_DIR, "CatBoost.pkl")
     meta, model = {}, None
     if os.path.exists(meta_path):
         with open(meta_path, encoding="utf-8") as f:
