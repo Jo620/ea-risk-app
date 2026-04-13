@@ -10,6 +10,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.ticker as mticker
 import streamlit as st
 warnings.filterwarnings("ignore")
 plt.rcParams["axes.unicode_minus"] = False
@@ -103,19 +104,30 @@ features = meta.get("features", [])
 
 @st.cache_resource
 def get_explainer(_model, _features):
+    """
+    使用新版 shap.Explainer（与 notebook Cell 26 保持一致）。
+    返回的 SHAP 值在 log-odds 空间，base_value 约为 -4.251，与 notebook 结果完全一致。
+    """
     try:
         import shap
         from sklearn.pipeline import Pipeline
         if isinstance(_model, Pipeline):
-            bg   = pd.DataFrame(np.zeros((1, len(_features))), columns=_features)
-            bg_t = _model.named_steps["prep"].transform(bg)
-            return shap.TreeExplainer(_model.named_steps["model"], bg_t)
-        return shap.TreeExplainer(_model)
-    except Exception:
+            prep   = _model.named_steps["prep"]
+            core   = _model.named_steps["model"]
+            # 用全零背景（与 app 无训练数据的部署场景匹配）
+            bg = np.zeros((1, len(_features)))
+            bg_t = prep.transform(pd.DataFrame(bg, columns=_features))
+            explainer = shap.Explainer(core, bg_t, feature_names=_features)
+        else:
+            bg = np.zeros((1, len(_features)))
+            explainer = shap.Explainer(_model, bg, feature_names=_features)
+        return explainer
+    except Exception as e:
+        st.warning(f"shap.Explainer 初始化失败: {e}")
         return None
 
 if model is None:
-    st.error("未找到 CatBoost.pkl,请将模型文件放在 app.py 同一目录。"); st.stop()
+    st.error("未找到 CatBoost.pkl，请将模型文件放在 app.py 同一目录。"); st.stop()
 if not features:
     st.warning("meta.json 中未找到 features 列表。"); st.stop()
 
@@ -135,23 +147,24 @@ with st.sidebar:
         if zh:
             st.markdown(f"<div class='feat-zh'>{zh}</div>", unsafe_allow_html=True)
         
-        # 特殊处理分类变量
         if feat == "Analgesics before the end of the surgery":
+            # 0=无（最高风险）> 1=阿片类 > 2=NSAIDs > 3=两者均用（最低风险）
             opts = {
-                "0 — None / 无": 0,
+                "0 — None / 无（风险最高）": 0,
                 "1 — Opioids / 阿片类": 1,
                 "2 — NSAIDs / 非甾体类": 2,
-                "3 — Both / 阿片类+非甾体类": 3
+                "3 — Both / 阿片类+非甾体类（风险最低）": 3
             }
             sel = st.selectbox(feat, list(opts.keys()), key=feat)
             input_vals[feat] = opts[sel]
         elif feat == "Education Degree":
+            # 0=文盲（风险最高）→ 4=大专及以上（风险最低）
             opts = {
-                "0 — Illiteracy / 文盲": 0,
+                "0 — Illiteracy / 文盲（风险最高）": 0,
                 "1 — Elementary school / 小学": 1,
                 "2 — Middle school / 中学": 2,
                 "3 — Technical secondary school / 高中": 3,
-                "4 — College degree or above / 大专及以上": 4
+                "4 — College degree or above / 大专及以上（风险最低）": 4
             }
             sel = st.selectbox(feat, list(opts.keys()), key=feat)
             input_vals[feat] = opts[sel]
@@ -177,12 +190,10 @@ with st.sidebar:
             sel = st.selectbox(feat, list(opts.keys()), key=feat)
             input_vals[feat] = opts[sel]
         elif feat in CAT_FEATS:
-            # 其他分类变量仍使用二分类
             opts = {"0 — No / 否":0,"1 — Yes / 是":1}
             sel  = st.selectbox(feat, list(opts.keys()), key=feat)
             input_vals[feat] = opts[sel]
         else:
-            # 连续变量
             input_vals[feat] = st.number_input(feat, value=0.0, format="%.2f", key=feat)
     st.markdown("---")
     calc_btn = st.button("🔍  Calculate Risk / 计算风险")
@@ -191,7 +202,6 @@ if calc_btn:
     X_input = pd.DataFrame([input_vals])[features].astype(float)
     prob    = float(model.predict_proba(X_input)[0,1])
     pct     = prob * 100
-    # 修改风险阈值：>66.3%为高风险
     if pct > 66.3:
         rc,rtxt,bc,tc = "c-high","HIGH RISK / 高风险","#dc2626","bg-high"
     elif pct >= 30:
@@ -251,21 +261,23 @@ if explainer is None:
     st.info("SHAP explainer 初始化失败"); st.stop()
 
 try:
+    import shap
     from sklearn.pipeline import Pipeline
-    if isinstance(model, Pipeline):
-        X_t = model.named_steps["prep"].transform(X_input)
-        sv  = explainer.shap_values(X_t)
-        sv  = sv[1] if isinstance(sv,list) else sv
-    else:
-        sv = explainer.shap_values(X_input.values)
-        sv = sv[1] if isinstance(sv,list) else sv
 
-    sv = np.array(sv).flatten()
+    if isinstance(model, Pipeline):
+        prep = model.named_steps["prep"]
+        X_t  = prep.transform(X_input)
+        # shap.Explainer 返回 Explanation 对象
+        shap_exp = explainer(X_t)
+    else:
+        shap_exp = explainer(X_input.values)
+
+    # 取第一个样本的 SHAP 值（log-odds 空间，与 notebook 一致）
+    sv       = np.array(shap_exp.values[0]).flatten()
+    base_val = float(shap_exp.base_values[0])
+
     n  = min(len(sv), len(features))
     sv, fn = sv[:n], features[:n]
-    base_val = float(explainer.expected_value[1]
-                     if isinstance(explainer.expected_value,(list,np.ndarray))
-                     else explainer.expected_value)
 
     r2l, r2r = st.columns([1, 1], gap="large")
 
@@ -278,7 +290,8 @@ try:
         order  = np.argsort(np.abs(sv))[::-1]
         sv_p   = sv[order]; fn_p = [fn[i] for i in order]
         vv_p   = [float(X_input.iloc[0][f]) for f in fn_p]
-        labels = [f"{f} = {v:.2g}" for f,v in zip(fn_p,vv_p)]
+        # ★ 修复：直接显示实际数值，不用科学计数法
+        labels = [f"{f} = {v:g}" for f, v in zip(fn_p, vv_p)]
 
         fig1, ax1 = plt.subplots(figsize=(6,5))
         fig1.patch.set_facecolor("#ffffff"); ax1.set_facecolor("#ffffff")
@@ -286,9 +299,12 @@ try:
         ax1.barh(labels[::-1], sv_p[::-1], color=colors[::-1], height=0.62,
                  edgecolor="none", alpha=0.88)
         ax1.axvline(0, color="#cbd5e1", linewidth=1.2, zorder=0)
-        ax1.set_xlabel("SHAP Value", fontsize=8.5, color="#64748b", labelpad=6)
+        ax1.set_xlabel("SHAP Value (log-odds)", fontsize=8.5, color="#64748b", labelpad=6)
         ax1.tick_params(axis="y", labelsize=8, colors="#374151", length=0)
         ax1.tick_params(axis="x", labelsize=8, colors="#94a3b8")
+        # ★ 修复：关闭 x 轴科学计数法
+        ax1.xaxis.set_major_formatter(mticker.ScalarFormatter())
+        ax1.ticklabel_format(style='plain', axis='x')
         ax1.spines[["top","right","left","bottom"]].set_visible(False)
         ax1.grid(axis="x", color="#f1f5f9", linewidth=0.8, zorder=0)
         ax1.legend(handles=[
@@ -304,11 +320,10 @@ try:
     with r2r:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown('<div class="card-title">Decision Force Plot · 决策力图</div>', unsafe_allow_html=True)
-        st.caption("Waterfall: each bar shows one feature's contribution")
+        st.caption("Waterfall: each bar shows one feature's contribution (log-odds space)")
 
         top_f   = 8
         idx_s   = np.argsort(np.abs(sv))[::-1][:top_f]
-        # 按值从小到大排列（底部→顶部堆叠）
         idx_s   = idx_s[np.argsort(sv[idx_s])]
         sv_s    = sv[idx_s]
         fn_s    = [fn[i] for i in idx_s]
@@ -319,7 +334,6 @@ try:
         fig2.patch.set_facecolor("#ffffff")
         ax2.set_facecolor("#ffffff")
 
-        # 累计起点（从 base_val 开始）
         running = base_val
         starts, widths, cols = [], [], []
         for sv_i in sv_s:
@@ -330,41 +344,35 @@ try:
 
         y_pos = np.arange(n_bars)
 
-        # 绘制 bars
         for i,(s,w,c) in enumerate(zip(starts, widths, cols)):
             ax2.barh(y_pos[i], w, left=s, height=0.52,
                      color=c, alpha=0.88, edgecolor="white", linewidth=0.8)
-            # SHAP 数值标注（bar 右侧或左侧）
             x_txt = s + w + (0.003 if w >= 0 else -0.003)
             ha    = "left" if w >= 0 else "right"
             ax2.text(x_txt, y_pos[i], f"{sv_s[i]:+.3f}",
                      ha=ha, va="center", fontsize=8, color="#374151", fontweight="600")
 
-        # 连接线（瀑布图经典连接线）
         for i in range(n_bars - 1):
             x_end = starts[i] + widths[i]
             ax2.plot([x_end, x_end], [y_pos[i]+0.28, y_pos[i+1]-0.28],
                      color="#cbd5e1", linewidth=0.9, linestyle="--")
 
-        # Y 轴标签（特征名 + 值）
-        ylabels = [f"{f}  =  {v:.2g}" for f,v in zip(fn_s, vv_s)]
+        # ★ 修复：y 轴标签用 :g 格式，消除科学计数法
+        ylabels = [f"{f}  =  {v:g}" for f, v in zip(fn_s, vv_s)]
         ax2.set_yticks(y_pos)
         ax2.set_yticklabels(ylabels, fontsize=8.5, color="#374151")
 
-        # 基准线 & 预测线
         ax2.axvline(base_val, color="#94a3b8", lw=1.4, linestyle="--", zorder=0)
         ax2.axvline(running,  color="#1e40af", lw=2.0, linestyle="-",  zorder=0)
 
-        # 底部注释
         ybot = -0.8
         ax2.text(base_val, ybot, f"Baseline\nE[f]={base_val:.3f}",
                  ha="center", va="top", fontsize=7.5, color="#64748b",
                  fontweight="600", linespacing=1.4)
-        ax2.text(running, ybot, f"Prediction\nf(x)={prob:.3f}",
+        ax2.text(running, ybot, f"Prediction\nf(x)={running:.3f}\n(prob={prob:.3f})",
                  ha="center", va="top", fontsize=7.5, color="#1e40af",
                  fontweight="700", linespacing=1.4)
 
-        # x 范围留白
         all_x = starts + [running, base_val]
         xmin, xmax = min(all_x), max(all_x)
         pad = max((xmax - xmin) * 0.25, 0.08)
@@ -375,8 +383,11 @@ try:
         ax2.spines["bottom"].set_color("#e2e8f0")
         ax2.tick_params(axis="x", labelsize=8, colors="#94a3b8")
         ax2.tick_params(axis="y", length=0)
-        ax2.set_xlabel("Model output value", fontsize=8, color="#64748b", labelpad=6)
+        ax2.set_xlabel("Model output value (log-odds)", fontsize=8, color="#64748b", labelpad=6)
         ax2.grid(axis="x", color="#f8fafc", linewidth=0.8, zorder=0)
+        # ★ 修复：关闭 x 轴科学计数法
+        ax2.xaxis.set_major_formatter(mticker.ScalarFormatter())
+        ax2.ticklabel_format(style='plain', axis='x')
 
         ax2.legend(handles=[
             mpatches.Patch(facecolor="#22c55e",alpha=.88,label="Decrease Risk"),
