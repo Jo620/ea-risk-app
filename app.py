@@ -17,11 +17,11 @@ plt.rcParams["axes.unicode_minus"] = False
 EN2ZH = {
     "ALB":                                      "白蛋白",
     "Hb":                                       "血红蛋白",
-    "Analgesics before the end of the surgery": "术末镇痛药",
+    "Analgesics before the end of the surgery": "手术结束前给予镇痛药",
     "Age":                                      "年龄",
     "Duration of anesthesia":                   "麻醉时长",
     "Weight":                                   "体重",
-    "Education Degree":                         "教育程度",
+    "Education Degree":                         "文化程度",
     "Dexmedetomidine":                          "右美托咪定",
     "Ultrasound-guided nerve block":            "超声引导神经阻滞",
     "ASA class1f1cat1on":                       "ASA 分级",
@@ -115,13 +115,13 @@ def get_explainer(_model, _features):
         return None
 
 if model is None:
-    st.error("未找到 XGB.pkl，请将模型文件放在 app.py 同一目录。"); st.stop()
+    st.error("未找到 CatBoost.pkl,请将模型文件放在 app.py 同一目录。"); st.stop()
 if not features:
     st.warning("meta.json 中未找到 features 列表。"); st.stop()
 
 st.markdown("""
 <div class="hero">
-  <h1>🏥 基于机器学习的术后躁动（EA）风险预测系统</h1>
+  <h1>🏥 成人全麻术后苏醒期躁动（EA）风险预测系统</h1>
   <p>ML-Based Emergence Agitation Risk Prediction &nbsp;·&nbsp; 输入患者参数 → 实时预测风险</p>
 </div>""", unsafe_allow_html=True)
 
@@ -134,11 +134,55 @@ with st.sidebar:
         zh = EN2ZH.get(feat,"")
         if zh:
             st.markdown(f"<div class='feat-zh'>{zh}</div>", unsafe_allow_html=True)
-        if feat in CAT_FEATS:
+        
+        # 特殊处理分类变量
+        if feat == "Analgesics before the end of the surgery":
+            opts = {
+                "0 — None / 无": 0,
+                "1 — Opioids / 阿片类": 1,
+                "2 — NSAIDs / 非甾体类": 2,
+                "3 — Both / 阿片类+非甾体类": 3
+            }
+            sel = st.selectbox(feat, list(opts.keys()), key=feat)
+            input_vals[feat] = opts[sel]
+        elif feat == "Education Degree":
+            opts = {
+                "0 — Illiteracy / 文盲": 0,
+                "1 — Elementary school / 小学": 1,
+                "2 — Middle school / 中学": 2,
+                "3 — Technical secondary school / 高中": 3,
+                "4 — College degree or above / 大专及以上": 4
+            }
+            sel = st.selectbox(feat, list(opts.keys()), key=feat)
+            input_vals[feat] = opts[sel]
+        elif feat == "ASA class1f1cat1on":
+            opts = {
+                "1 — Ⅰ级": 1,
+                "2 — Ⅱ级": 2,
+                "3 — Ⅲ级": 3
+            }
+            sel = st.selectbox(feat, list(opts.keys()), key=feat)
+            input_vals[feat] = opts[sel]
+        elif feat == "Type of surgery":
+            opts = {
+                "0 — Joint surgery / 关节外科": 0,
+                "1 — Urology / 泌尿外科": 1,
+                "2 — Gynecology / 妇科": 2,
+                "3 — General surgery / 普外科": 3,
+                "4 — Thoracic surgery / 胸外科": 4,
+                "5 — E.N.T / 耳鼻喉": 5,
+                "6 — Trauma Orthopedics / 创骨": 6,
+                "7 — Spine surgery / 脊柱": 7
+            }
+            sel = st.selectbox(feat, list(opts.keys()), key=feat)
+            input_vals[feat] = opts[sel]
+        elif feat in CAT_FEATS:
+            # 其他分类变量仍使用二分类
             opts = {"0 — No / 否":0,"1 — Yes / 是":1}
             sel  = st.selectbox(feat, list(opts.keys()), key=feat)
             input_vals[feat] = opts[sel]
         else:
+            # 连续变量
             input_vals[feat] = st.number_input(feat, value=0.0, format="%.2f", key=feat)
     st.markdown("---")
     calc_btn = st.button("🔍  Calculate Risk / 计算风险")
@@ -147,7 +191,8 @@ if calc_btn:
     X_input = pd.DataFrame([input_vals])[features].astype(float)
     prob    = float(model.predict_proba(X_input)[0,1])
     pct     = prob * 100
-    if pct >= 60:
+    # 修改风险阈值：>66.3%为高风险
+    if pct > 66.3:
         rc,rtxt,bc,tc = "c-high","HIGH RISK / 高风险","#dc2626","bg-high"
     elif pct >= 30:
         rc,rtxt,bc,tc = "c-mid","MODERATE / 中等风险","#d97706","bg-mid"
